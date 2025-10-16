@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>The Last Aurora — Prototype</title>
+  <style>
+    html,body{height:100%;margin:0;background:#000;overflow:hidden;font-family:Inter,system-ui,Arial}
+    #overlay{position:fixed;left:20px;top:20px;color:#dfefff;max-width:420px;backdrop-filter:blur(6px);background:linear-gradient(180deg, rgba(10,12,20,0.45), rgba(6,7,10,0.35));padding:14px;border-radius:12px;border:1px solid rgba(255,255,255,0.04)}
+    #title{font-size:18px;font-weight:700;margin-bottom:6px}
+    #story{font-size:13px;line-height:1.35;opacity:0.95}
+    #controls{position:fixed;right:20px;top:20px;color:#dfefff;background:rgba(0,0,0,0.3);padding:10px;border-radius:10px;border:1px solid rgba(255,255,255,0.04)}
+    #hud{position:fixed;left:50%;transform:translateX(-50%);top:18px;color:#fff;font-weight:600;background:linear-gradient(90deg, rgba(0,0,0,0.25), rgba(0,0,0,0.12));padding:6px 12px;border-radius:999px}
+    #characters{margin-top:10px}
+    .char{margin-top:8px;padding:8px;border-radius:8px;background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));}
+    .char h4{margin:0 0 4px 0;font-size:13px}
+    .btn{margin-top:10px;padding:8px 12px;border-radius:8px;background:#48b;display:inline-block;color:white;cursor:pointer}
+    #message{position:fixed;left:50%;transform:translateX(-50%);bottom:20px;color:#dff;pointer-events:none}
+  </style>
+</head>
+<body>
+  <div id="overlay">
+    <div id="title">The Last Aurora</div>
+    <div id="story">In the dying light of a fractured world, floating islands called "Auroras" drift through a neon sky. You are Kael — a scavenger who stumbles on a mysterious core that hums with life. Factions hunt the core. You must survive, learn the core's secret, and decide the fate of the last aurora.</div>
+    <div id="characters">
+      <div class="char"><h4>Kael (Player)</h4><div style="font-size:12px">A quick-witted pilot who rigs scavenged tech into a nimble sky-sledge. Good at dodging and precision shots.</div></div>
+      <div class="char"><h4>Nyx (Companion)</h4><div style="font-size:12px">A holographic AI from the core. Gives mission hints and unlocks ancient tech.</div></div>
+      <div class="char"><h4>The Warden</h4><div style="font-size:12px">Faction leader seeking the core for power. Commanders send drones to seize it.</div></div>
+    </div>
+    <div class="btn" id="startBtn">Start Game</div>
+  </div>
+
+  <div id="controls">
+    <div style="font-weight:700">Controls</div>
+    <div style="font-size:13px">WASD — move · Mouse — aim · Left click — fire · Space — jump/boost</div>
+  </div>
+  <div id="hud">Health: <span id="health">100</span> · Cores: <span id="cores">0</span></div>
+  <div id="message"></div>
+
+  <script type="module">
+    import * as THREE from 'https://unpkg.com/three@0.152.2/build/three.module.js';
+    import { OrbitControls } from 'https://unpkg.com/three@0.152.2/examples/jsm/controls/OrbitControls.js';
+    import { EffectComposer } from 'https://unpkg.com/three@0.152.2/examples/jsm/postprocessing/EffectComposer.js';
+    import { RenderPass } from 'https://unpkg.com/three@0.152.2/examples/jsm/postprocessing/RenderPass.js';
+    import { UnrealBloomPass } from 'https://unpkg.com/three@0.152.2/examples/jsm/postprocessing/UnrealBloomPass.js';
+
+    let scene, camera, renderer, composer;
+    let player, playerVelocity = new THREE.Vector3();
+    let bullets = [];
+    let enemies = [];
+    let lastTime = performance.now();
+    let keys = {};
+    let HEALTH = 100, CORES = 0;
+
+    const startBtn = document.getElementById('startBtn');
+    const overlay = document.getElementById('overlay');
+    const healthEl = document.getElementById('health');
+    const coresEl = document.getElementById('cores');
+    const msg = document.getElementById('message');
+
+    startBtn.addEventListener('click', ()=>{
+      overlay.style.display='none';
+      init(); animate();
+    });
+
+    function init(){
+      // Renderer
+      renderer = new THREE.WebGLRenderer({antialias:true});
+      renderer.setPixelRatio(window.devicePixelRatio);
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      document.body.appendChild(renderer.domElement);
+
+      // Scene + Camera
+      scene = new THREE.Scene();
+      scene.fog = new THREE.FogExp2(0x041022, 0.0025);
+      camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 2000);
+      camera.position.set(0,8,18);
+
+      // Lights
+      const hemi = new THREE.HemisphereLight(0xfff7e6, 0x080820, 0.8);
+      scene.add(hemi);
+      const dir = new THREE.DirectionalLight(0xa6e6ff, 1.2);
+      dir.position.set(-10,40,20);
+      dir.castShadow = true;
+      scene.add(dir);
+
+      // Bloom composer
+      composer = new EffectComposer(renderer);
+      composer.addPass(new RenderPass(scene, camera));
+      composer.addPass(new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.7, 0.4, 0.1));
+
+      // Skybox gradient
+      const skyGeo = new THREE.SphereGeometry(500, 32, 15);
+      const skyMat = new THREE.MeshBasicMaterial({side:THREE.BackSide, vertexColors:true});
+      const sky = new THREE.Mesh(skyGeo, skyMat);
+      const colorAttr = sky.geometry.attributes.position;
+      const colors = [];
+      for(let i=0;i<colorAttr.count;i++){
+        const y = colorAttr.getY(i);
+        const t = (y + 500) / 1000;
+        const top = new THREE.Color(0x08112b);
+        const bottom = new THREE.Color(0x0b1530);
+        const c = bottom.clone().lerp(new THREE.Color(0x1a2a6a), t*1.2);
+        colors.push(c.r,c.g,c.b);
+      }
+      sky.geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors,3));
+      scene.add(sky);
+
+      // Floating islands (procedural)
+      const islandGeom = new THREE.IcosahedronGeometry(10,2);
+      for(let i=0;i<12;i++){
+        const m = new THREE.Mesh(islandGeom.clone(), new THREE.MeshStandardMaterial({roughness:0.9,metalness:0.1}));
+        m.scale.setScalar(1.2 + Math.random()*1.6);
+        m.position.set((Math.random()-0.5)*120, -5 + Math.random()*30, (Math.random()-0.5)*120);
+        m.rotation.set(Math.random()*Math.PI, Math.random()*Math.PI, 0);
+        m.material.color.setHSL(0.6 + Math.random()*0.12, 0.4, 0.15 + Math.random()*0.15);
+        scene.add(m);
+      }
+
+      // Ground plane of main platform
+      const ground = new THREE.Mesh(new THREE.PlaneGeometry(600,600,32,32), new THREE.MeshStandardMaterial({color:0x0b1a26,roughness:1}));
+      ground.rotation.x = -Math.PI/2; ground.position.y = -12; scene.add(ground);
+
+      // Player (simple sky-sledge)
+      const bodyGeo = new THREE.ConeGeometry(0.9,2.8,12);
+      const bodyMat = new THREE.MeshStandardMaterial({color:0xd4f6ff,metalness:0.3,roughness:0.2,emissive:0x00335a,emissiveIntensity:0.2});
+      player = new THREE.Mesh(bodyGeo, bodyMat);
+      player.rotation.x = Math.PI/2;
+      player.position.set(0,1,0);
+      scene.add(player);
+
+      // Companion hologram
+      const holoGeom = new THREE.SphereGeometry(0.35,16,12);
+      const holoMat = new THREE.MeshBasicMaterial({color:0x79f0ff,transparent:true,opacity:0.85});
+      const holo = new THREE.Mesh(holoGeom, holoMat);
+      holo.position.set(1.6,2.4,-0.2); player.add(holo);
+
+      // Enemies (drones)
+      spawnEnemies(6);
+
+      // Events
+      window.addEventListener('resize', onWindowResize);
+      document.addEventListener('keydown', e=>keys[e.key.toLowerCase()]=true);
+      document.addEventListener('keyup', e=>keys[e.key.toLowerCase()]=false);
+      document.addEventListener('pointerdown', shoot);
+      document.addEventListener('mousemove', onMouseMove);
+    }
+
+    function spawnEnemies(n){
+      const geo = new THREE.TorusGeometry(0.6,0.2,12,40);
+      for(let i=0;i<n;i++){
+        const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({color:0xff8a8a,emissive:0xff3344,metalness:0.6,roughness:0.3}));
+        m.position.set((Math.random()-0.5)*80,1+Math.random()*6,(Math.random()-0.5)*80);
+        m.userData = {hp:20,vel:new THREE.Vector3((Math.random()-0.5)*0.02,0,(Math.random()-0.5)*0.02)};
+        scene.add(m); enemies.push(m);
+      }
+    }
+
+    function onWindowResize(){
+      camera.aspect = window.innerWidth/window.innerHeight; camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      composer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    let mouse = {x:0,y:0};
+    function onMouseMove(e){
+      mouse.x = (e.clientX/window.innerWidth)*2 -1;
+      mouse.y = (e.clientY/window.innerHeight)*2 -1;
+    }
+
+    function shoot(){
+      const dir = new THREE.Vector3(0,0,-1).applyQuaternion(player.quaternion).normalize();
+      const bullet = new THREE.Mesh(new THREE.SphereGeometry(0.12,8,8), new THREE.MeshBasicMaterial({color:0xe0ffff}));
+      bullet.position.copy(player.position).add(dir.clone().multiplyScalar(2.2));
+      bullet.userData = {vel:dir.clone().multiplyScalar(0.8), life:200};
+      scene.add(bullet); bullets.push(bullet);
+    }
+
+    function animate(){
+      const now = performance.now();
+      const dt = Math.min(60,(now-lastTime))/1000; lastTime = now;
+
+      // Player input
+      const speed = 12;
+      const move = new THREE.Vector3();
+      if(keys['w']) move.z -= 1; if(keys['s']) move.z += 1; if(keys['a']) move.x -= 1; if(keys['d']) move.x += 1;
+      move.normalize();
+      move.multiplyScalar(speed*dt);
+      player.position.add(move);
+
+      // Aim towards mouse (simple)
+      const aimPoint = new THREE.Vector3(mouse.x*40, (1-mouse.y)*10 - 5, -20);
+      const worldAim = aimPoint.applyMatrix4(camera.matrixWorld);
+      player.lookAt(worldAim);
+
+      // Bullets
+      for(let i=bullets.length-1;i>=0;i--){
+        const b = bullets[i]; b.position.addScaledVector(b.userData.vel, dt*60);
+        b.userData.life -= dt*60; if(b.userData.life<=0){ scene.remove(b); bullets.splice(i,1); continue; }
+        // collision with enemies
+        for(let j=enemies.length-1;j>=0;j--){
+          const e = enemies[j]; if(e.position.distanceTo(b.position) < 1){ e.userData.hp -= 12; scene.remove(b); bullets.splice(i,1); if(e.userData.hp<=0){scene.remove(e); enemies.splice(j,1); CORES++; coresEl.textContent = CORES; showMessage('Drone destroyed — core shard recovered.');} break; }
+        }
+      }
+
+      // Enemies behavior
+      for(let i=enemies.length-1;i>=0;i--){
+        const e = enemies[i];
+        const dirToPlayer = player.position.clone().sub(e.position).setY(0).normalize();
+        e.position.add(dirToPlayer.multiplyScalar(0.02 + Math.random()*0.02));
+        // if close, damage
+        if(e.position.distanceTo(player.position) < 1.2){ HEALTH -= 8*dt; healthEl.textContent = Math.max(0,Math.round(HEALTH)); if(HEALTH<=0){ endGame(false); return; } }
+      }
+
+      // Camera follows behind player
+      const camTarget = player.position.clone().add(new THREE.Vector3(0,6,18).applyQuaternion(player.quaternion));
+      camera.position.lerp(camTarget, 0.12);
+      const look = player.position.clone().add(new THREE.Vector3(0,2,0));
+      camera.lookAt(look);
+
+      // Subtle planet rotation
+      scene.rotation.y += 0.00012;
+
+      composer.render();
+      // if few enemies, spawn more occasionally
+      if(enemies.length < 3 && Math.random() < 0.01) spawnEnemies(1);
+
+      // Win condition
+      if(CORES >= 4){ endGame(true); return; }
+
+      requestAnimationFrame(animate);
+    }
+
+    function showMessage(t){ msg.textContent = t; msg.style.opacity=1; clearTimeout(msg._t); msg._t = setTimeout(()=>{ msg.style.opacity=0; msg.textContent=''; },2600); }
+
+    function endGame(win){
+      const txt = win ? 'You fused the core with the aurora. Light blooms across the sky — you chose hope.' : 'Your sledge sputters. The aurora dims...';
+      overlay.style.display = 'block'; overlay.querySelector('#title').textContent = win ? 'Victory' : 'Defeat'; overlay.querySelector('#story').textContent = txt + "\n\nCharacters: Kael — the scavenger. Nyx — the core's voice. The Warden — unrestored leader.";
+      overlay.querySelector('#startBtn').textContent = 'Restart';
+      HEALTH = 100; CORES = 0; healthEl.textContent = HEALTH; coresEl.textContent = CORES;
+
+      // remove objects
+      bullets.forEach(b=>scene.remove(b)); bullets=[]; enemies.forEach(e=>scene.remove(e)); enemies=[];
+    }
+
+  </script>
+</body>
+</html>
